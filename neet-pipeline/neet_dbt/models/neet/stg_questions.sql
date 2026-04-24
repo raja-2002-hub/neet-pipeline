@@ -23,8 +23,27 @@ SELECT
     difficulty,
     expected_time_seconds,
     has_diagram,
+    has_question_diagram,
+    has_option_diagram,
+    has_solution_diagram,
     confidence,
     is_reviewed,
+
+    -- Diagram URLs (singular - first image)
+    question_diagram_url,
+    solution_diagram_url,
+    option_1_diagram_url,
+    option_2_diagram_url,
+    option_3_diagram_url,
+    option_4_diagram_url,
+
+    -- Diagram URLs (plural - all images JSON array)
+    question_diagram_urls,
+    solution_diagram_urls,
+    option_1_diagram_urls,
+    option_2_diagram_urls,
+    option_3_diagram_urls,
+    option_4_diagram_urls,
 
     -- Quality flag
     CASE
