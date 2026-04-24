@@ -1,0 +1,13 @@
+
+============================================================
+VERIFICATION COMPLETE
+============================================================
+  Total questions:    180
+  Quality OK:         178
+  Flag mismatches:    22
+  Orphan images:      33
+  Broken URLs:        0
+  Failed bucket files:32
+
+  Open verification_report.html in browser
+============================================================

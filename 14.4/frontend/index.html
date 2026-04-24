@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NEET Diagram Review</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #f8fafc; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script>
+    var h = React.createElement;
+    var useState = React.useState;
+    var useEffect = React.useEffect;
+    var useCallback = React.useCallback;
+    var API = window.location.origin + "/api";
+
+    var ZONES = [
+      {id:"question",label:"Question",color:"#2563eb",bg:"#dbeafe"},
+      {id:"option_1",label:"Option 1",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_2",label:"Option 2",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_3",label:"Option 3",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_4",label:"Option 4",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"solution",label:"Solution",color:"#059669",bg:"#d1fae5"},
+      {id:"junk",label:"Junk",color:"#dc2626",bg:"#fee2e2"}
+    ];
+    var ZM = {};
+    ZONES.forEach(function(z) { ZM[z.id] = z; });
+
+    function parseUrls(s) {
+      try { var p = JSON.parse(s || "[]"); return Array.isArray(p) ? p : []; }
+      catch(e) { return []; }
+    }
+
+    function imgUrl(g) { return API + "/image?path=" + encodeURIComponent(g); }
+    function fname(u) { return u ? u.split("/").pop() : ""; }
+    function sColor(s) { return s >= 80 ? "#059669" : s >= 50 ? "#d97706" : "#dc2626"; }
+
+    function buildImgs(q) {
+      var imgs = [];
+      function add(zone, s) {
+        parseUrls(s).forEach(function(u, i) {
+          imgs.push({id: q.question_number + "_" + zone + "_" + i, file: fname(u), zone: zone, gcs: u, src: imgUrl(u)});
+        });
+      }
+      add("question", q.question_diagram_urls);
+      for (var i = 1; i <= 4; i++) add("option_" + i, q["option_" + i + "_diagram_urls"]);
+      add("solution", q.solution_diagram_urls);
+      return imgs;
+    }
+
+    var badgeColors = {
+      critical: {bg:"#fef2f2", c:"#991b1b", b:"#fca5a5"},
+      needs_review: {bg:"#fef3c7", c:"#92400e", b:"#fcd34d"},
+      minor_issues: {bg:"#e0f2fe", c:"#075985", b:"#7dd3fc"},
+      auto_approved: {bg:"#d1fae5", c:"#065f46", b:"#6ee7b7"},
+      modified: {bg:"#ede9fe", c:"#5b21b6", b:"#a78bfa"}
+    };
+
+    function Badge(props) {
+      var s = badgeColors[props.status] || badgeColors.needs_review;
+      return h("span", {
+        style: {background: s.bg, color: s.c, border: "1px solid " + s.b, padding: "2px 10px", borderRadius: "99px", fontSize: "10px", fontWeight: 700, textTransform: "uppercase"}
+      }, props.status);
+    }
+
+    function ImgCard(props) {
+      var img = props.img;
+      var zone = props.zone;
+      var onZone = props.onZone;
+      var z = ZM[zone] || ZONES[0];
+      var es = useState(false);
+      var err = es[0];
+      var setErr = es[1];
+
+      return h("div", {style: {border: "1px solid #e2e8f0", borderRadius: "10px", padding: "8px", background: "#fff", cursor: "pointer"}},
+        !err
+          ? h("img", {src: img.src, onError: function() { setErr(true); }, style: {width: "100%", height: "85px", objectFit: "contain", borderRadius: "6px", background: "#f8fafc", display: "block"}})
+          : h("div", {style: {width: "100%", height: "85px", borderRadius: "6px", background: "#f8fafc", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: "#94a3b8", textAlign: "center"}}, img.file),
+        h("div", {style: {marginTop: "4px", fontSize: "9px", color: "#94a3b8", fontFamily: "monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap"}}, img.file),
+        h("select", {
+          value: zone,
+          onChange: function(e) { onZone(img.id, e.target.value); },
+          onClick: function(e) { e.stopPropagation(); },
+          style: {width: "100%", marginTop: "3px", padding: "4px", fontSize: "11px", fontWeight: 600, border: "1.5px solid " + z.color, borderRadius: "6px", background: z.bg, color: z.color, cursor: "pointer"}
+        },
+          ZONES.map(function(x) { return h("option", {key: x.id, value: x.id}, x.label); })
+        )
+      );
+    }
+
+    function App() {
+      var s1 = useState([]); var papers = s1[0]; var setPapers = s1[1];
+      var s2 = useState(null); var paperId = s2[0]; var setPaperId = s2[1];
+      var s3 = useState([]); var qs = s3[0]; var setQs = s3[1];
+      var s4 = useState(null); var stats = s4[0]; var setStats = s4[1];
+      var s5 = useState(0); var idx = s5[0]; var setIdx = s5[1];
+      var s6 = useState("all"); var flt = s6[0]; var setFlt = s6[1];
+      var s7 = useState({}); var changes = s7[0]; var setChanges = s7[1];
+      var s8 = useState({}); var statuses = s8[0]; var setStatuses = s8[1];
+      var s9 = useState({}); var imgC = s9[0]; var setImgC = s9[1];
+      var s10 = useState(true); var loading = s10[0]; var setLoading = s10[1];
+      var s11 = useState(false); var saving = s11[0]; var setSaving = s11[1];
+      var s12 = useState(null); var error = s12[0]; var setError = s12[1];
+
+      useEffect(function() {
+        fetch(API + "/papers").then(function(r) { return r.json(); }).then(function(d) {
+          setPapers(d.papers || []);
+          if (d.papers && d.papers.length) setPaperId(d.papers[0].paper_id);
+        }).catch(function(e) { setError("Cannot connect: " + e.message); setLoading(false); });
+      }, []);
+
+      useEffect(function() {
+        if (!paperId) return;
+        setLoading(true);
+        setError(null);
+        fetch(API + "/questions/" + paperId + "?diagrams_only=true").then(function(r) { return r.json(); }).then(function(d) {
+          var q = d.questions || [];
+          setQs(q);
+          setStats(d.stats);
+          var s = {};
+          q.forEach(function(x) { s[x.question_number] = x.validation ? x.validation.review_status : "needs_review"; });
+          setStatuses(s);
+          setChanges({});
+          setIdx(0);
+          var c = {};
+          q.forEach(function(x) { c[x.question_number] = buildImgs(x); });
+          setImgC(c);
+          setLoading(false);
+        }).catch(function(e) { setError(e.message); setLoading(false); });
+      }, [paperId]);
+
+      var filtered = qs.filter(function(q) {
+        var st = changes[q.question_number] ? "modified" : statuses[q.question_number];
+        if (flt === "all") return true;
+        if (flt === "critical") return st === "critical";
+        if (flt === "needs_review") return st === "critical" || st === "needs_review";
+        if (flt === "auto_approved") return st === "auto_approved";
+        return true;
+      });
+
+      var cur = filtered[idx];
+      var curImgs = cur ? (imgC[cur.question_number] || []) : [];
+
+      function getZone(img) {
+        if (cur && changes[cur.question_number] && changes[cur.question_number][img.id]) {
+          return changes[cur.question_number][img.id];
+        }
+        return img.zone;
+      }
+
+      function onZone(imgId, zone) {
+        if (!cur) return;
+        setChanges(function(p) {
+          var n = JSON.parse(JSON.stringify(p));
+          if (!n[cur.question_number]) n[cur.question_number] = {};
+          n[cur.question_number][imgId] = zone;
+          return n;
+        });
+      }
+
+      function onApprove() {
+        if (!cur) return;
+        var ch = changes[cur.question_number];
+        if (ch && Object.keys(ch).length) {
+          setSaving(true);
+          var imgs = imgC[cur.question_number] || [];
+          var zm = {};
+          imgs.forEach(function(img) {
+            var z = ch[img.id] || img.zone;
+            if (z === "junk") return;
+            if (!zm[z]) zm[z] = [];
+            zm[z].push(img.gcs);
+          });
+          var body = {paper_id: paperId, corrections: {}};
+          body.corrections[cur.section + "_" + cur.question_number] = zm;
+          fetch(API + "/review/save", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify(body)
+          }).then(function() { setSaving(false); }).catch(function() { setSaving(false); });
+        }
+        setStatuses(function(p) { var n = JSON.parse(JSON.stringify(p)); n[cur.question_number] = "auto_approved"; return n; });
+        if (idx < filtered.length - 1) setIdx(idx + 1);
+      }
+
+      useEffect(function() {
+        function handler(e) {
+          if (e.key === "ArrowRight" && idx < filtered.length - 1) setIdx(function(v) { return v + 1; });
+          if (e.key === "ArrowLeft" && idx > 0) setIdx(function(v) { return v - 1; });
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onApprove();
+        }
+        window.addEventListener("keydown", handler);
+        return function() { window.removeEventListener("keydown", handler); };
+      });
+
+      if (error) {
+        return h("div", {style: {padding: "60px 24px", textAlign: "center"}},
+          h("h2", {style: {color: "#dc2626", marginBottom: "12px"}}, "Connection Error"),
+          h("p", {style: {color: "#64748b", marginBottom: "24px"}}, error),
+          h("p", {style: {color: "#94a3b8", fontSize: "13px"}}, "Backend: " + API),
+          h("button", {onClick: function() { location.reload(); }, style: {marginTop: "16px", padding: "10px 24px", background: "#4f46e5", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer"}}, "Retry")
+        );
+      }
+
+      var topbar = h("div", {style: {padding: "10px 20px", background: "#0f172a", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px"}},
+        h("div", {style: {display: "flex", alignItems: "center", gap: "12px"}},
+          h("span", {style: {fontSize: "15px", fontWeight: 800, color: "#f1f5f9"}}, "NEET Diagram Review"),
+          papers.length > 0 ? h("select", {
+            value: paperId || "",
+            onChange: function(e) { setPaperId(e.target.value); },
+            style: {padding: "4px 8px", fontSize: "11px", background: "#1e293b", color: "#94a3b8", border: "1px solid #334155", borderRadius: "6px", cursor: "pointer"}
+          }, papers.map(function(p) { return h("option", {key: p.paper_id, value: p.paper_id}, p.source_file + " (" + p.year + ")"); })) : null,
+          stats ? h("div", {style: {display: "flex", gap: "4px"}},
+            h("span", {style: {fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: "#fef2f2", color: "#991b1b", fontWeight: 600}}, stats.critical + " critical"),
+            h("span", {style: {fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: "#fef3c7", color: "#92400e", fontWeight: 600}}, stats.needs_review + " review"),
+            h("span", {style: {fontSize: "10px", padding: "2px 8px", borderRadius: "4px", background: "#d1fae5", color: "#065f46", fontWeight: 600}}, stats.auto_approved + " ok")
+          ) : null
+        ),
+        h("div", {style: {display: "flex", gap: "2px", background: "#1e293b", borderRadius: "8px", padding: "2px"}},
+          ["all", "critical", "needs_review", "auto_approved"].map(function(f) {
+            return h("button", {
+              key: f,
+              onClick: function() { setFlt(f); setIdx(0); },
+              style: {padding: "5px 12px", fontSize: "11px", fontWeight: 600, border: "none", borderRadius: "6px", cursor: "pointer", background: flt === f ? "#334155" : "transparent", color: flt === f ? "#f1f5f9" : "#64748b", textTransform: "capitalize"}
+            }, f.replace(/_/g, " "));
+          })
+        )
+      );
+
+      if (loading) {
+        return h("div", null, topbar, h("div", {style: {textAlign: "center", padding: "80px", color: "#64748b"}}, "Loading questions from BigQuery..."));
+      }
+
+      var sidebarItems = filtered.map(function(q, i) {
+        var v = q.validation || {};
+        var sc = v.diagram_confidence != null ? v.diagram_confidence : 100;
+        var hasCh = changes[q.question_number] && Object.keys(changes[q.question_number]).length;
+        var st = hasCh ? "modified" : (statuses[q.question_number] || v.review_status);
+        return h("div", {
+          key: q.question_number,
+          onClick: function() { setIdx(i); },
+          style: {padding: "10px 14px", cursor: "pointer", background: i === idx ? "#f0f4ff" : "transparent", borderLeft: i === idx ? "3px solid #4f46e5" : "3px solid transparent", borderBottom: "1px solid #f8fafc"}
+        },
+          h("div", {style: {display: "flex", justifyContent: "space-between", alignItems: "center"}},
+            h("div", {style: {display: "flex", alignItems: "center", gap: "8px"}},
+              h("span", {style: {fontSize: "13px", fontWeight: i === idx ? 700 : 500, fontFamily: "'JetBrains Mono', monospace"}}, "Q" + q.question_number),
+              h("span", {style: {fontSize: "11px", fontWeight: 700, color: sColor(sc)}}, sc)
+            ),
+            h(Badge, {status: st})
+          ),
+          h("div", {style: {fontSize: "10px", color: "#94a3b8", marginTop: "3px"}},
+            (imgC[q.question_number] || []).length + " imgs · " + q.section,
+            (v.flags && v.flags.length) ? h("span", {style: {color: "#dc2626", marginLeft: "6px"}}, v.flags.length + " flags") : null
+          )
+        );
+      });
+
+      var mainContent = null;
+      if (cur) {
+        var v = cur.validation || {};
+        var flags = v.flags || [];
+        var sc = v.diagram_confidence != null ? v.diagram_confidence : 100;
+        var hasCh = changes[cur.question_number] && Object.keys(changes[cur.question_number]).length;
+
+        var optionRows = [1, 2, 3, 4].map(function(n) {
+          var cor = String(n) === String(cur.correct_answer);
+          var zi = curImgs.filter(function(img) { return getZone(img) === "option_" + n; });
+          var optText = cur["option_" + n] || "";
+          return h("div", {
+            key: n,
+            style: {display: "flex", alignItems: "flex-start", gap: "10px", padding: "7px 10px", marginBottom: "2px", borderRadius: "8px", background: cor ? "#f0fdf4" : "transparent", border: cor ? "1px solid #bbf7d0" : "1px solid transparent"}
+          },
+            h("span", {style: {fontWeight: 700, fontSize: "12px", color: cor ? "#15803d" : "#64748b", minWidth: "24px", height: "24px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: "6px", background: cor ? "#dcfce7" : "#f1f5f9", flexShrink: 0}}, n),
+            h("div", {style: {flex: 1, fontSize: "12px", color: "#475569"}},
+              optText.length > 120 ? optText.slice(0, 120) + "..." : optText,
+              cor ? h("span", {style: {color: "#16a34a", fontWeight: 600, marginLeft: "6px"}}, " ✓") : null
+            ),
+            h("div", {style: {display: "flex", gap: "4px", flexShrink: 0}},
+              zi.map(function(img) { return h("img", {key: img.id, src: img.src, onError: function(e) { e.target.style.display = "none"; }, style: {width: "38px", height: "30px", objectFit: "contain", borderRadius: "4px", border: "1px solid #e2e8f0", background: "#f8fafc"}}); }),
+              !zi.length ? h("span", {style: {fontSize: "10px", color: "#cbd5e1", fontStyle: "italic"}}, "no img") : null
+            )
+          );
+        });
+
+        var flagRows = flags.length > 0 ? h("div", {style: {padding: "8px 20px", borderBottom: "1px solid #f1f5f9"}},
+          flags.map(function(f, i) {
+            var bg = f.severity === "critical" ? "#fef2f2" : f.severity === "warning" ? "#fef3c7" : "#f0f9ff";
+            var c = f.severity === "critical" ? "#991b1b" : f.severity === "warning" ? "#92400e" : "#0369a1";
+            return h("div", {key: i, style: {display: "flex", alignItems: "flex-start", gap: "8px", padding: "4px 0", fontSize: "12px"}},
+              h("span", {style: {fontSize: "10px", padding: "1px 6px", borderRadius: "4px", fontWeight: 700, flexShrink: 0, background: bg, color: c}}, f.severity),
+              h("span", {style: {color: "#475569"}}, f.detail)
+            );
+          })
+        ) : null;
+
+        var imgGrid = h("div", {style: {padding: "14px 20px"}},
+          h("div", {style: {fontSize: "11px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", marginBottom: "8px"}}, "Extracted images — reassign with dropdown"),
+          h("div", {style: {display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "8px"}},
+            curImgs.map(function(img) {
+              return h(ImgCard, {key: img.id, img: img, zone: getZone(img), onZone: onZone});
+            })
+          )
+        );
+
+        mainContent = h("div", null,
+          h("div", {style: {background: "#fff", borderRadius: "14px", border: "1px solid #e2e8f0", overflow: "hidden"}},
+            h("div", {style: {padding: "14px 20px", background: "#0f172a", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px"}},
+              h("div", {style: {display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap"}},
+                h("span", {style: {fontSize: "22px", fontWeight: 800, color: "#fff", fontFamily: "'JetBrains Mono', monospace"}}, "Q" + cur.question_number),
+                h("span", {style: {fontSize: "11px", color: "#94a3b8", padding: "2px 8px", background: "#1e293b", borderRadius: "6px"}}, cur.section + " · " + (cur.topic || "")),
+                h(Badge, {status: hasCh ? "modified" : statuses[cur.question_number]})
+              ),
+              h("div", {style: {display: "flex", gap: "8px"}},
+                h("span", {style: {fontSize: "12px", fontWeight: 800, color: sColor(sc), padding: "3px 10px", background: "rgba(255,255,255,0.06)", borderRadius: "6px"}}, sc),
+                h("span", {style: {fontSize: "11px", color: "#10b981", padding: "3px 10px", background: "rgba(16,185,129,0.1)", borderRadius: "6px", fontWeight: 600}}, "Ans: (" + cur.correct_answer + ")")
+              )
+            ),
+            h("div", {style: {padding: "12px 20px", fontSize: "13px", color: "#334155", lineHeight: 1.6, borderBottom: "1px solid #f1f5f9", background: "#fafbfc"}}, cur.question_text),
+            flagRows,
+            h("div", {style: {padding: "10px 20px", borderBottom: "1px solid #f1f5f9"}}, optionRows),
+            imgGrid,
+            h("div", {style: {padding: "12px 20px", borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "space-between", alignItems: "center", background: "#fafbfc"}},
+              h("span", {style: {fontSize: "11px", color: "#94a3b8"}}, hasCh ? Object.keys(changes[cur.question_number]).length + " changes" : "Review above"),
+              h("button", {
+                onClick: onApprove,
+                disabled: saving,
+                style: {padding: "8px 28px", fontSize: "12px", fontWeight: 700, color: "#fff", background: saving ? "#94a3b8" : hasCh ? "linear-gradient(135deg,#6366f1,#4f46e5)" : "linear-gradient(135deg,#10b981,#059669)", border: "none", borderRadius: "8px", cursor: saving ? "wait" : "pointer", boxShadow: "0 2px 6px rgba(0,0,0,0.1)"}
+              }, saving ? "Saving..." : hasCh ? "Save & Approve" : "Approve")
+            )
+          ),
+          h("div", {style: {display: "flex", justifyContent: "space-between", marginTop: "10px"}},
+            h("button", {disabled: idx === 0, onClick: function() { setIdx(idx - 1); }, style: {padding: "6px 18px", fontSize: "12px", fontWeight: 600, border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", color: idx === 0 ? "#cbd5e1" : "#475569", cursor: idx === 0 ? "default" : "pointer"}}, "Prev"),
+            h("span", {style: {fontSize: "11px", color: "#94a3b8", alignSelf: "center"}}, (idx + 1) + "/" + filtered.length),
+            h("button", {disabled: idx >= filtered.length - 1, onClick: function() { setIdx(idx + 1); }, style: {padding: "6px 18px", fontSize: "12px", fontWeight: 600, border: "1px solid #e2e8f0", borderRadius: "8px", background: "#fff", color: idx >= filtered.length - 1 ? "#cbd5e1" : "#475569", cursor: idx >= filtered.length - 1 ? "default" : "pointer"}}, "Next")
+          )
+        );
+      } else {
+        mainContent = h("div", {style: {textAlign: "center", padding: "80px", color: "#94a3b8"}}, "All questions reviewed!");
+      }
+
+      return h("div", null,
+        topbar,
+        h("div", {style: {display: "flex", height: "calc(100vh - 48px)"}},
+          h("div", {style: {width: "220px", borderRight: "1px solid #e2e8f0", background: "#fff", overflowY: "auto", flexShrink: 0}},
+            h("div", {style: {padding: "10px 14px 6px", fontSize: "10px", fontWeight: 700, color: "#94a3b8", textTransform: "uppercase"}}, filtered.length + " questions"),
+            sidebarItems
+          ),
+          h("div", {style: {flex: 1, overflowY: "auto", padding: "14px"}}, mainContent)
+        )
+      );
+    }
+
+    var root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(h(App));
+  </script>
+</body>
+</html>

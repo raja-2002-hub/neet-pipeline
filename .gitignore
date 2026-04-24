@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform.lock.hcl
+
+# dbt
+neet_dbt/target/
+neet_dbt/logs/
+neet_dbt/dbt_packages/
+
+# Environment
+.env
+*.key
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+
+# Secrets
+api_key_gemini.txt
+*.key
+
+# Terraform
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+
+# Images
+mapped_images/
+
+# PDF/DOCX source files
+*.pdf
+*.docx

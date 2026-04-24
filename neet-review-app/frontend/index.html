@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NEET Diagram Review</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css" rel="stylesheet" />
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #f8fafc; }
+    .crop-modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); z-index: 1000; display: flex; flex-direction: column; }
+    .crop-header { padding: 10px 20px; background: #0f172a; display: flex; justify-content: space-between; align-items: center; }
+    .crop-body { flex: 1; display: flex; overflow: hidden; }
+    .crop-canvas-area { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 10px; }
+    .crop-canvas-area img { max-width: 100%; max-height: 100%; }
+    .crop-sidebar { width: 200px; background: #1e293b; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+    .crop-btn { padding: 8px 16px; font-size: 12px; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    var h = React.createElement, useState = React.useState, useEffect = React.useEffect, useRef = React.useRef;
+    var API = window.location.origin + "/api";
+    var ZONES = [
+      {id:"question",label:"Question",color:"#2563eb",bg:"#dbeafe"},
+      {id:"option_1",label:"Option 1",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_2",label:"Option 2",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_3",label:"Option 3",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"option_4",label:"Option 4",color:"#7c3aed",bg:"#ede9fe"},
+      {id:"solution",label:"Solution",color:"#059669",bg:"#d1fae5"},
+      {id:"junk",label:"Junk",color:"#dc2626",bg:"#fee2e2"}
+    ];
+    var ZM = {}; ZONES.forEach(function(z) { ZM[z.id] = z; });
+    function parseUrls(s) { if (Array.isArray(s)) return s; if (!s) return []; try { var p = JSON.parse(s); return Array.isArray(p) ? p : []; } catch(e) { return []; } }
+    function imgUrl(g) { return API + "/image?path=" + encodeURIComponent(g); }
+    function fname(u) { return u ? u.split("/").pop() : ""; }
+    function sColor(s) { return s >= 80 ? "#059669" : s >= 50 ? "#d97706" : "#dc2626"; }
+    function parsePageNum(u) { if (!u) return null; var m = fname(u).match(/^p(\d+)_/); return m ? parseInt(m[1],10) : null; }
+    function getQuestionPage(q) {
+      var urls = [].concat(parseUrls(q.question_diagram_urls), parseUrls(q.solution_diagram_urls));
+      for (var i=1;i<=4;i++) urls = urls.concat(parseUrls(q["option_"+i+"_diagram_urls"]));
+      for (var j=0;j<urls.length;j++) { var p=parsePageNum(urls[j]); if(p) return p; }
+      return null;
+    }
+    function buildImgs(q) {
+      var imgs = [];
+      function add(zone,s) { parseUrls(s).forEach(function(u,i) { imgs.push({id:q.question_number+"_"+zone+"_"+i,file:fname(u),zone:zone,gcs:u,src:imgUrl(u)}); }); }
+      add("question",q.question_diagram_urls);
+      for (var i=1;i<=4;i++) add("option_"+i,q["option_"+i+"_diagram_urls"]);
+      add("solution",q.solution_diagram_urls);
+      return imgs;
+    }
+    var badgeColors = {critical:{bg:"#fef2f2",c:"#991b1b",b:"#fca5a5"},needs_review:{bg:"#fef3c7",c:"#92400e",b:"#fcd34d"},minor_issues:{bg:"#e0f2fe",c:"#075985",b:"#7dd3fc"},auto_approved:{bg:"#d1fae5",c:"#065f46",b:"#6ee7b7"},modified:{bg:"#ede9fe",c:"#5b21b6",b:"#a78bfa"}};
+    function Badge(props) { var s=badgeColors[props.status]||badgeColors.needs_review; return h("span",{style:{background:s.bg,color:s.c,border:"1px solid "+s.b,padding:"2px 10px",borderRadius:"99px",fontSize:"10px",fontWeight:700,textTransform:"uppercase"}},props.status); }
+    function ImgCard(props) {
+      var img=props.img,zone=props.zone,onZone=props.onZone,z=ZM[zone]||ZONES[0];
+      var es=useState(false),err=es[0],setErr=es[1];
+      return h("div",{style:{border:"1px solid #e2e8f0",borderRadius:"10px",padding:"8px",background:"#fff"}},
+        !err?h("img",{src:img.src,onError:function(){setErr(true);},style:{width:"100%",height:"85px",objectFit:"contain",borderRadius:"6px",background:"#f8fafc",display:"block"}}):h("div",{style:{width:"100%",height:"85px",borderRadius:"6px",background:"#f8fafc",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:"#94a3b8",textAlign:"center"}},img.file),
+        h("div",{style:{marginTop:"4px",fontSize:"9px",color:"#94a3b8",fontFamily:"monospace",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},img.file),
+        h("select",{value:zone,onChange:function(e){onZone(img.id,e.target.value);},onClick:function(e){e.stopPropagation();},style:{width:"100%",marginTop:"3px",padding:"4px",fontSize:"11px",fontWeight:600,border:"1.5px solid "+z.color,borderRadius:"6px",background:z.bg,color:z.color,cursor:"pointer"}},ZONES.map(function(x){return h("option",{key:x.id,value:x.id},x.label);}))
+      );
+    }
+
+    /* ═══ CropModal ═══ */
+    function CropModal(props) {
+      var paperId=props.paperId,pageNum=props.pageNum||1,questionNumber=props.questionNumber,onClose=props.onClose,onCropped=props.onCropped;
+      var imgRef=useRef(null),cropperRef=useRef(null);
+      var ps=useState(null),pageImg=ps[0],setPageImg=ps[1];
+      var ls=useState(true),loading=ls[0],setLoading=ls[1];
+      var us=useState(false),uploading=us[0],setUploading=us[1];
+      var ms=useState(""),msg=ms[0],setMsg=ms[1];
+      var pns=useState(pageNum),curPage=pns[0],setCurPage=pns[1];
+      var tps=useState(83),totalPages=tps[0],setTotalPages=tps[1];
+
+      var cls=useState(true),cleanMode=cls[0],setCleanMode=cls[1];
+
+      // Fetch page image from server (PyMuPDF renders, clean=true removes watermark)
+      function loadPage(pn, isClean) {
+        setLoading(true);
+        var cleanParam = (isClean !== undefined ? isClean : cleanMode);
+        setMsg(cleanParam ? "Rendering clean page..." : "Rendering page...");
+        var url = API + "/pdf/" + paperId + "/page/" + pn + "?dpi=200&clean=" + cleanParam;
+        var imgEl = new window.Image();
+        imgEl.crossOrigin = "anonymous";
+        imgEl.onload = function() {
+          setPageImg(url);
+          setLoading(false);
+          setMsg("");
+        };
+        imgEl.onerror = function() {
+          if (cleanParam) {
+            // Fallback: try without watermark removal
+            setMsg("Clean render failed, loading with watermark...");
+            loadPage(pn, false);
+          } else {
+            setMsg("Failed to load page " + pn);
+            setLoading(false);
+          }
+        };
+        imgEl.src = url;
+      }
+
+      function toggleClean() {
+        var newClean = !cleanMode;
+        setCleanMode(newClean);
+        if (cropperRef.current) { cropperRef.current.destroy(); cropperRef.current = null; }
+        loadPage(curPage, newClean);
+      }
+
+      // Load first page on mount
+      useEffect(function() {
+        loadPage(curPage);
+      }, [paperId]);
+
+      function goPage(pn) {
+        if (pn < 1 || pn > totalPages) return;
+        setCurPage(pn);
+        if (cropperRef.current) { cropperRef.current.destroy(); cropperRef.current = null; }
+        loadPage(pn);
+      }
+      useEffect(function() {
+        if(!pageImg||!imgRef.current) return;
+        if(cropperRef.current) cropperRef.current.destroy();
+        cropperRef.current=new Cropper(imgRef.current,{viewMode:1,dragMode:'crop',autoCrop:false,background:true,responsive:true,guides:true});
+        return function(){if(cropperRef.current){cropperRef.current.destroy();cropperRef.current=null;}};
+      },[pageImg]);
+
+      function doCrop() {
+        if(!cropperRef.current) return;
+        var cc=cropperRef.current.getCroppedCanvas({width:400,imageSmoothingEnabled:true,imageSmoothingQuality:'high'});
+        if(!cc){setMsg("Draw a crop rectangle first");return;}
+        setUploading(true); setMsg("Uploading...");
+        fetch(API+"/image/upload",{method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({paper_id:paperId,question_number:questionNumber,image_data:cc.toDataURL('image/png')})
+        }).then(function(r){if(!r.ok) return r.text().then(function(t){throw new Error(t);}); return r.json();})
+        .then(function(d){setUploading(false);setMsg("Uploaded: "+d.filename);if(onCropped) onCropped(d.gcs_url,d.filename);})
+        .catch(function(e){setUploading(false);setMsg("Failed: "+e.message);});
+      }
+
+      return h("div",{className:"crop-modal"},
+        h("div",{className:"crop-header"},
+          h("div",{style:{display:"flex",alignItems:"center",gap:"12px"}},
+            h("span",{style:{fontSize:"14px",fontWeight:700,color:"#f1f5f9"}},"Crop from PDF — Q"+questionNumber),
+            h("div",{style:{display:"flex",alignItems:"center",gap:"6px"}},
+              h("button",{onClick:function(){goPage(curPage-1);},disabled:curPage<=1,style:{padding:"4px 10px",fontSize:"11px",border:"1px solid #475569",borderRadius:"4px",background:"#334155",color:curPage<=1?"#64748b":"#f1f5f9",cursor:curPage<=1?"default":"pointer"}},"◀"),
+              h("span",{style:{fontSize:"12px",color:"#94a3b8",minWidth:"80px",textAlign:"center"}},"Page "+curPage+" / "+totalPages),
+              h("button",{onClick:function(){goPage(curPage+1);},disabled:curPage>=totalPages,style:{padding:"4px 10px",fontSize:"11px",border:"1px solid #475569",borderRadius:"4px",background:"#334155",color:curPage>=totalPages?"#64748b":"#f1f5f9",cursor:curPage>=totalPages?"default":"pointer"}},"▶")
+            )
+          ),
+          h("button",{onClick:onClose,style:{padding:"6px 16px",fontSize:"12px",fontWeight:600,border:"none",borderRadius:"6px",background:"#475569",color:"#f1f5f9",cursor:"pointer"}},"✕ Close")
+        ),
+        h("div",{className:"crop-body"},
+          h("div",{className:"crop-canvas-area"},
+            loading?h("div",{style:{color:"#94a3b8",fontSize:"14px"}},"Rendering page "+curPage+"..."):
+            pageImg?h("img",{ref:imgRef,src:pageImg,style:{maxWidth:"100%",maxHeight:"100%"}}):
+            h("div",{style:{color:"#f87171"}},msg||"No page")
+          ),
+          h("div",{className:"crop-sidebar"},
+            h("div",{style:{fontSize:"11px",color:"#94a3b8",fontWeight:600,textTransform:"uppercase",marginBottom:"4px"}},"How to crop"),
+            h("div",{style:{fontSize:"11px",color:"#cbd5e1",lineHeight:1.5}},"1. Navigate to page",h("br"),"2. Click & drag to select",h("br"),"3. Click Crop & Upload",h("br"),"4. Image added to grid"),
+            h("button",{className:"crop-btn",onClick:doCrop,disabled:uploading||loading,style:{background:uploading?"#94a3b8":"#4f46e5",color:"#fff",marginTop:"auto"}},uploading?"Uploading...":"Crop & Upload"),
+            h("button",{className:"crop-btn",onClick:function(){if(cropperRef.current) cropperRef.current.clear();},style:{background:"#334155",color:"#f1f5f9"}},"Clear Selection"),
+            h("button",{className:"crop-btn",onClick:toggleClean,style:{background:cleanMode?"#059669":"#475569",color:"#fff",fontSize:"10px"}},cleanMode?"Watermark: OFF ✓":"Watermark: ON"),
+            msg?h("div",{style:{fontSize:"10px",color:msg.indexOf("ail")>=0?"#f87171":"#10b981",padding:"6px",background:"#0f172a",borderRadius:"4px",wordBreak:"break-all"}},msg):null
+          )
+        )
+      );
+    }
+
+    /* ═══ Main App ═══ */
+    function App() {
+      var s1=useState([]),papers=s1[0],setPapers=s1[1];
+      var s2=useState(null),paperId=s2[0],setPaperId=s2[1];
+      var s3=useState([]),qs=s3[0],setQs=s3[1];
+      var s4=useState(null),stats=s4[0],setStats=s4[1];
+      var s5=useState(0),idx=s5[0],setIdx=s5[1];
+      var s6=useState("all"),flt=s6[0],setFlt=s6[1];
+      var s7=useState({}),changes=s7[0],setChanges=s7[1];
+      var s8=useState({}),statuses=s8[0],setStatuses=s8[1];
+      var s9=useState({}),imgC=s9[0],setImgC=s9[1];
+      var s10=useState(true),loading=s10[0],setLoading=s10[1];
+      var s11=useState(false),saving=s11[0],setSaving=s11[1];
+      var s12=useState(null),error=s12[0],setError=s12[1];
+      var s13=useState(null),saveMsg=s13[0],setSaveMsg=s13[1];
+      var s14=useState(true),pdfOpen=s14[0],setPdfOpen=s14[1];
+      var s15=useState(false),cropOpen=s15[0],setCropOpen=s15[1];
+
+      useEffect(function(){
+        fetch(API+"/papers").then(function(r){return r.json();}).then(function(d){
+          setPapers(d.papers||[]);if(d.papers&&d.papers.length) setPaperId(d.papers[0].paper_id);
+        }).catch(function(e){setError("Cannot connect: "+e.message);setLoading(false);});
+      },[]);
+
+      useEffect(function(){
+        if(!paperId) return; setLoading(true);setError(null);
+        fetch(API+"/questions/"+paperId+"?diagrams_only=true").then(function(r){return r.json();}).then(function(d){
+          var q=d.questions||[]; setQs(q);setStats(d.stats);
+          var s={}; q.forEach(function(x){s[x.question_number]=x.validation?x.validation.review_status:"needs_review";});
+          setStatuses(s);setChanges({});setIdx(0);
+          var c={}; q.forEach(function(x){c[x.question_number]=buildImgs(x);});
+          setImgC(c);setLoading(false);
+        }).catch(function(e){setError(e.message);setLoading(false);});
+      },[paperId]);
+
+      var filtered=qs.filter(function(q){
+        var st=changes[q.question_number]?"modified":statuses[q.question_number];
+        if(flt==="all") return true; if(flt==="critical") return st==="critical";
+        if(flt==="needs_review") return st==="critical"||st==="needs_review";
+        if(flt==="auto_approved") return st==="auto_approved"; return true;
+      });
+      var cur=filtered[idx], curImgs=cur?(imgC[cur.question_number]||[]):[];
+
+      function getZone(img){if(cur&&changes[cur.question_number]&&changes[cur.question_number][img.id]) return changes[cur.question_number][img.id]; return img.zone;}
+      function onZone(imgId,zone){if(!cur) return; setChanges(function(p){var n=JSON.parse(JSON.stringify(p));if(!n[cur.question_number]) n[cur.question_number]={};n[cur.question_number][imgId]=zone;return n;});}
+
+      function onCropped(gcsUrl,filename){
+        if(!cur) return;
+        var newImg={id:cur.question_number+"_crop_"+Date.now(),file:filename,zone:"question",gcs:gcsUrl,src:imgUrl(gcsUrl)};
+        setImgC(function(p){var n=JSON.parse(JSON.stringify(p));if(!n[cur.question_number]) n[cur.question_number]=[];n[cur.question_number].push(newImg);return n;});
+        setChanges(function(p){var n=JSON.parse(JSON.stringify(p));if(!n[cur.question_number]) n[cur.question_number]={};n[cur.question_number][newImg.id]="question";return n;});
+      }
+
+      // Paste from clipboard
+      useEffect(function(){
+        function handlePaste(e){
+          if(!cur||cropOpen) return;
+          var items=(e.clipboardData||{}).items; if(!items) return;
+          for(var i=0;i<items.length;i++){
+            if(items[i].type.indexOf('image')>=0){
+              e.preventDefault(); var blob=items[i].getAsFile(); var reader=new FileReader();
+              reader.onload=function(ev){
+                fetch(API+"/image/upload",{method:"POST",headers:{"Content-Type":"application/json"},
+                  body:JSON.stringify({paper_id:paperId,question_number:cur.question_number,image_data:ev.target.result})
+                }).then(function(r){return r.json();}).then(function(d){
+                  onCropped(d.gcs_url,d.filename);
+                  setSaveMsg("Pasted: "+d.filename);setTimeout(function(){setSaveMsg(null);},3000);
+                }).catch(function(err){setSaveMsg("Paste failed: "+err.message);});
+              }; reader.readAsDataURL(blob); break;
+            }
+          }
+        }
+        window.addEventListener('paste',handlePaste);
+        return function(){window.removeEventListener('paste',handlePaste);};
+      });
+
+      function onApprove(){
+        if(!cur) return; setSaving(true);setSaveMsg(null);
+        var ch=changes[cur.question_number],hasChanges=ch&&Object.keys(ch).length,savePromise;
+        if(hasChanges){
+          var imgs=imgC[cur.question_number]||[],zm={};
+          imgs.forEach(function(img){var z=ch[img.id]||img.zone;if(z==="junk") return;if(!zm[z]) zm[z]=[];zm[z].push(img.gcs);});
+          savePromise=fetch(API+"/review/save",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paper_id:paperId,question_number:cur.question_number,zones:zm})});
+        } else {
+          savePromise=fetch(API+"/review/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({paper_id:paperId,question_number:cur.question_number})});
+        }
+        savePromise.then(function(r){if(!r.ok) return r.text().then(function(t){throw new Error("HTTP "+r.status+": "+t);});return r.json();})
+        .then(function(d){setSaving(false);setSaveMsg("Q"+cur.question_number+" saved");setTimeout(function(){setSaveMsg(null);},3000);
+          setStatuses(function(p){var n=JSON.parse(JSON.stringify(p));n[cur.question_number]="auto_approved";return n;});
+          if(idx<filtered.length-1) setIdx(idx+1);
+        }).catch(function(e){setSaving(false);setSaveMsg("FAILED: "+e.message);});
+      }
+
+      useEffect(function(){
+        function handler(e){if(cropOpen) return;if(e.key==="ArrowRight"&&idx<filtered.length-1) setIdx(function(v){return v+1;});if(e.key==="ArrowLeft"&&idx>0) setIdx(function(v){return v-1;});if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)) onApprove();}
+        window.addEventListener("keydown",handler);return function(){window.removeEventListener("keydown",handler);};
+      });
+
+      if(error) return h("div",{style:{padding:"60px 24px",textAlign:"center"}},h("h2",{style:{color:"#dc2626",marginBottom:"12px"}},"Connection Error"),h("p",{style:{color:"#64748b"}},error),h("button",{onClick:function(){location.reload();},style:{marginTop:"16px",padding:"10px 24px",background:"#4f46e5",color:"#fff",border:"none",borderRadius:"8px",cursor:"pointer"}},"Retry"));
+
+      var topbar=h("div",{style:{padding:"10px 20px",background:"#0f172a",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}},
+        h("div",{style:{display:"flex",alignItems:"center",gap:"12px"}},
+          h("span",{style:{fontSize:"15px",fontWeight:800,color:"#f1f5f9"}},"NEET Diagram Review"),
+          papers.length>0?h("select",{value:paperId||"",onChange:function(e){setPaperId(e.target.value);},style:{padding:"4px 8px",fontSize:"11px",background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:"6px",cursor:"pointer"}},papers.map(function(p){return h("option",{key:p.paper_id,value:p.paper_id},p.source_file+" ("+p.year+")");})):null,
+          stats?h("div",{style:{display:"flex",gap:"4px"}},
+            h("span",{style:{fontSize:"10px",padding:"2px 8px",borderRadius:"4px",background:"#fef2f2",color:"#991b1b",fontWeight:600}},stats.critical+" critical"),
+            h("span",{style:{fontSize:"10px",padding:"2px 8px",borderRadius:"4px",background:"#fef3c7",color:"#92400e",fontWeight:600}},stats.needs_review+" review"),
+            h("span",{style:{fontSize:"10px",padding:"2px 8px",borderRadius:"4px",background:"#d1fae5",color:"#065f46",fontWeight:600}},stats.auto_approved+" ok")
+          ):null
+        ),
+        h("div",{style:{display:"flex",gap:"6px",alignItems:"center"}},
+          h("div",{style:{display:"flex",gap:"2px",background:"#1e293b",borderRadius:"8px",padding:"2px"}},
+            ["all","critical","needs_review","auto_approved"].map(function(f){return h("button",{key:f,onClick:function(){setFlt(f);setIdx(0);},style:{padding:"5px 12px",fontSize:"11px",fontWeight:600,border:"none",borderRadius:"6px",cursor:"pointer",background:flt===f?"#334155":"transparent",color:flt===f?"#f1f5f9":"#64748b",textTransform:"capitalize"}},f.replace(/_/g," "));})
+          ),
+          h("button",{onClick:function(){setPdfOpen(!pdfOpen);},style:{padding:"5px 12px",fontSize:"11px",fontWeight:600,border:"1px solid #334155",borderRadius:"6px",cursor:"pointer",background:pdfOpen?"#4f46e5":"#1e293b",color:pdfOpen?"#fff":"#94a3b8"}},pdfOpen?"PDF ✓":"PDF")
+        )
+      );
+
+      if(loading) return h("div",null,topbar,h("div",{style:{textAlign:"center",padding:"80px",color:"#64748b"}},"Loading..."));
+
+      var sidebarItems=filtered.map(function(q,i){
+        var v=q.validation||{},sc=v.diagram_confidence!=null?v.diagram_confidence:100;
+        var hasCh=changes[q.question_number]&&Object.keys(changes[q.question_number]).length;
+        var st=hasCh?"modified":(statuses[q.question_number]||v.review_status);
+        return h("div",{key:q.question_number,onClick:function(){setIdx(i);},style:{padding:"10px 14px",cursor:"pointer",background:i===idx?"#f0f4ff":"transparent",borderLeft:i===idx?"3px solid #4f46e5":"3px solid transparent",borderBottom:"1px solid #f8fafc"}},
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center"}},
+            h("div",{style:{display:"flex",alignItems:"center",gap:"8px"}},h("span",{style:{fontSize:"13px",fontWeight:i===idx?700:500,fontFamily:"'JetBrains Mono', monospace"}},"Q"+q.question_number),h("span",{style:{fontSize:"11px",fontWeight:700,color:sColor(sc)}},sc)),
+            h(Badge,{status:st})
+          ),
+          h("div",{style:{fontSize:"10px",color:"#94a3b8",marginTop:"3px"}},(imgC[q.question_number]||[]).length+" imgs · "+q.section,(v.flags&&v.flags.length)?h("span",{style:{color:"#dc2626",marginLeft:"6px"}},v.flags.length+" flags"):null)
+        );
+      });
+
+      var mainContent=null;
+      if(cur){
+        var v=cur.validation||{},flags=v.flags||[],sc=v.diagram_confidence!=null?v.diagram_confidence:100;
+        var hasCh=changes[cur.question_number]&&Object.keys(changes[cur.question_number]).length;
+        var optionRows=[1,2,3,4].map(function(n){
+          var cor=String(n)===String(cur.correct_answer),zi=curImgs.filter(function(img){return getZone(img)==="option_"+n;}),optText=cur["option_"+n]||"";
+          return h("div",{key:n,style:{display:"flex",alignItems:"flex-start",gap:"10px",padding:"7px 10px",marginBottom:"2px",borderRadius:"8px",background:cor?"#f0fdf4":"transparent",border:cor?"1px solid #bbf7d0":"1px solid transparent"}},
+            h("span",{style:{fontWeight:700,fontSize:"12px",color:cor?"#15803d":"#64748b",minWidth:"24px",height:"24px",display:"flex",alignItems:"center",justifyContent:"center",borderRadius:"6px",background:cor?"#dcfce7":"#f1f5f9",flexShrink:0}},n),
+            h("div",{style:{flex:1,fontSize:"12px",color:"#475569"}},optText.length>120?optText.slice(0,120)+"...":optText,cor?h("span",{style:{color:"#16a34a",fontWeight:600,marginLeft:"6px"}}," ✓"):null),
+            h("div",{style:{display:"flex",gap:"4px",flexShrink:0}},zi.map(function(img){return h("img",{key:img.id,src:img.src,onError:function(e){e.target.style.display="none";},style:{width:"38px",height:"30px",objectFit:"contain",borderRadius:"4px",border:"1px solid #e2e8f0",background:"#f8fafc"}});}),!zi.length?h("span",{style:{fontSize:"10px",color:"#cbd5e1",fontStyle:"italic"}},"no img"):null)
+          );
+        });
+        var flagRows=flags.length>0?h("div",{style:{padding:"8px 20px",borderBottom:"1px solid #f1f5f9"}},flags.map(function(f,i){
+          var bg=f.severity==="critical"?"#fef2f2":f.severity==="warning"?"#fef3c7":"#f0f9ff";var c=f.severity==="critical"?"#991b1b":f.severity==="warning"?"#92400e":"#0369a1";
+          return h("div",{key:i,style:{display:"flex",alignItems:"flex-start",gap:"8px",padding:"4px 0",fontSize:"12px"}},h("span",{style:{fontSize:"10px",padding:"1px 6px",borderRadius:"4px",fontWeight:700,flexShrink:0,background:bg,color:c}},f.severity),h("span",{style:{color:"#475569"}},f.detail));
+        })):null;
+        var imgGrid=h("div",{style:{padding:"14px 20px"}},
+          h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}},
+            h("span",{style:{fontSize:"11px",fontWeight:700,color:"#94a3b8",textTransform:"uppercase"}},"Images — assign with dropdown"),
+            h("div",{style:{display:"flex",gap:"6px"}},
+              h("button",{onClick:function(){setCropOpen(true);},style:{padding:"4px 12px",fontSize:"10px",fontWeight:700,border:"1px solid #4f46e5",borderRadius:"6px",background:"#eef2ff",color:"#4f46e5",cursor:"pointer"}},"✂ Crop from PDF"),
+              h("span",{style:{fontSize:"9px",color:"#94a3b8",alignSelf:"center"}},"or Ctrl+V paste")
+            )
+          ),
+          h("div",{style:{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(140px, 1fr))",gap:"8px"}},curImgs.map(function(img){return h(ImgCard,{key:img.id,img:img,zone:getZone(img),onZone:onZone});}))
+        );
+        var saveMsgEl=saveMsg?h("div",{style:{padding:"6px 16px",fontSize:"11px",fontWeight:600,borderRadius:"6px",background:saveMsg.indexOf("FAILED")>=0?"#fef2f2":"#d1fae5",color:saveMsg.indexOf("FAILED")>=0?"#991b1b":"#065f46",border:saveMsg.indexOf("FAILED")>=0?"1px solid #fca5a5":"1px solid #6ee7b7"}},saveMsg):null;
+
+        mainContent=h("div",null,
+          h("div",{style:{background:"#fff",borderRadius:"14px",border:"1px solid #e2e8f0",overflow:"hidden"}},
+            h("div",{style:{padding:"14px 20px",background:"#0f172a",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}},
+              h("div",{style:{display:"flex",alignItems:"center",gap:"10px",flexWrap:"wrap"}},
+                h("span",{style:{fontSize:"22px",fontWeight:800,color:"#fff",fontFamily:"'JetBrains Mono', monospace"}},"Q"+cur.question_number),
+                h("span",{style:{fontSize:"11px",color:"#94a3b8",padding:"2px 8px",background:"#1e293b",borderRadius:"6px"}},cur.section+" · "+(cur.topic||"")),
+                h(Badge,{status:hasCh?"modified":statuses[cur.question_number]})
+              ),
+              h("div",{style:{display:"flex",gap:"8px"}},
+                h("span",{style:{fontSize:"12px",fontWeight:800,color:sColor(sc),padding:"3px 10px",background:"rgba(255,255,255,0.06)",borderRadius:"6px"}},sc),
+                h("span",{style:{fontSize:"11px",color:"#10b981",padding:"3px 10px",background:"rgba(16,185,129,0.1)",borderRadius:"6px",fontWeight:600}},"Ans: ("+cur.correct_answer+")")
+              )
+            ),
+            h("div",{style:{padding:"12px 20px",fontSize:"13px",color:"#334155",lineHeight:1.6,borderBottom:"1px solid #f1f5f9",background:"#fafbfc"}},cur.question_text),
+            flagRows,
+            h("div",{style:{padding:"10px 20px",borderBottom:"1px solid #f1f5f9"}},optionRows),
+            imgGrid,
+            h("div",{style:{padding:"12px 20px",borderTop:"1px solid #f1f5f9",display:"flex",justifyContent:"space-between",alignItems:"center",background:"#fafbfc",flexWrap:"wrap",gap:"8px"}},
+              h("div",{style:{display:"flex",alignItems:"center",gap:"10px"}},
+                h("span",{style:{fontSize:"11px",color:"#94a3b8"}},hasCh?Object.keys(changes[cur.question_number]).length+" changes":"No changes"),
+                saveMsgEl
+              ),
+              h("button",{onClick:onApprove,disabled:saving,style:{padding:"8px 28px",fontSize:"12px",fontWeight:700,color:"#fff",background:saving?"#94a3b8":hasCh?"linear-gradient(135deg,#6366f1,#4f46e5)":"linear-gradient(135deg,#10b981,#059669)",border:"none",borderRadius:"8px",cursor:saving?"wait":"pointer",boxShadow:"0 2px 6px rgba(0,0,0,0.1)"}},saving?"Saving...":hasCh?"Save & Approve":"Approve")
+            )
+          ),
+          h("div",{style:{display:"flex",justifyContent:"space-between",marginTop:"10px"}},
+            h("button",{disabled:idx===0,onClick:function(){setIdx(idx-1);},style:{padding:"6px 18px",fontSize:"12px",fontWeight:600,border:"1px solid #e2e8f0",borderRadius:"8px",background:"#fff",color:idx===0?"#cbd5e1":"#475569",cursor:idx===0?"default":"pointer"}},"Prev"),
+            h("span",{style:{fontSize:"11px",color:"#94a3b8",alignSelf:"center"}},(idx+1)+"/"+filtered.length),
+            h("button",{disabled:idx>=filtered.length-1,onClick:function(){setIdx(idx+1);},style:{padding:"6px 18px",fontSize:"12px",fontWeight:600,border:"1px solid #e2e8f0",borderRadius:"8px",background:"#fff",color:idx>=filtered.length-1?"#cbd5e1":"#475569",cursor:idx>=filtered.length-1?"default":"pointer"}},"Next")
+          )
+        );
+      } else { mainContent=h("div",{style:{textAlign:"center",padding:"80px",color:"#94a3b8"}},"All reviewed!"); }
+
+      var curPdfPage=cur?getQuestionPage(cur):null;
+      var pdfSrc=paperId&&pdfOpen?API+"/pdf/"+paperId+"#page="+(curPdfPage||1)+"&view=FitH&toolbar=1":null;
+
+      return h("div",null,
+        topbar,
+        cropOpen&&cur?h(CropModal,{paperId:paperId,pageNum:curPdfPage||1,questionNumber:cur.question_number,onClose:function(){setCropOpen(false);},onCropped:function(url,fn){onCropped(url,fn);}}):null,
+        h("div",{style:{display:"flex",height:"calc(100vh - 48px)"}},
+          h("div",{style:{width:"220px",borderRight:"1px solid #e2e8f0",background:"#fff",overflowY:"auto",flexShrink:0}},
+            h("div",{style:{padding:"10px 14px 6px",fontSize:"10px",fontWeight:700,color:"#94a3b8",textTransform:"uppercase"}},filtered.length+" questions"),
+            sidebarItems
+          ),
+          h("div",{style:{flex:pdfOpen?"1 1 55%":1,overflowY:"auto",padding:"14px",borderRight:pdfOpen?"1px solid #e2e8f0":"none"}},mainContent),
+          pdfOpen?h("div",{style:{flex:"1 1 45%",background:"#1e293b",display:"flex",flexDirection:"column",minWidth:"400px"}},
+            h("div",{style:{padding:"8px 14px",background:"#0f172a",borderBottom:"1px solid #334155",display:"flex",justifyContent:"space-between",alignItems:"center"}},
+              h("div",{style:{display:"flex",alignItems:"center",gap:"10px"}},
+                h("span",{style:{fontSize:"11px",fontWeight:700,color:"#f1f5f9"}},"Original PDF"),
+                curPdfPage?h("span",{style:{fontSize:"10px",color:"#94a3b8",padding:"2px 8px",background:"#1e293b",borderRadius:"4px"}},"Page "+curPdfPage):h("span",{style:{fontSize:"10px",color:"#f59e0b"}},"Page 1")
+              ),
+              h("button",{onClick:function(){setPdfOpen(false);},style:{padding:"3px 10px",fontSize:"11px",border:"none",borderRadius:"4px",cursor:"pointer",background:"#334155",color:"#f1f5f9"}},"✕")
+            ),
+            pdfSrc?h("iframe",{key:paperId+"_"+(curPdfPage||1),src:pdfSrc,style:{width:"100%",flex:1,border:"none",background:"#525659"},title:"PDF"}):null
+          ):null
+        )
+      );
+    }
+    ReactDOM.createRoot(document.getElementById("root")).render(h(App));
+  </script>
+</body>
+</html>

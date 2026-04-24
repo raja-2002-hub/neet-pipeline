@@ -1,0 +1,289 @@
+import fitz  # PyMuPDF
+import os
+import re
+from google.cloud import storage
+from google.cloud import bigquery
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Config
+PROJECT = "project-3639c8e1-b432-4a18-99f"
+DIAGRAMS_BUCKET = f"{PROJECT}-diagrams"
+PDF_FILE = "2016-NEET-Solutions-Phase-1-Code-A-P-W.pdf"
+PAPER_ID = "2016_neet_solutions_phase_1_code_a_p_w"
+MIN_IMAGE_SIZE = 50
+LOGO_Y_THRESHOLD = 60  # images above this y value are logos/headers
+
+# ─────────────────────────────────────────
+# FILTERS
+# ─────────────────────────────────────────
+
+def is_watermark(width, height):
+    """Filter out large background images."""
+    return width > 500 or height > 400
+
+def is_too_small(width, height):
+    """Filter out tiny decorative images."""
+    return width < MIN_IMAGE_SIZE or height < MIN_IMAGE_SIZE
+
+def is_logo(y0):
+    """Filter out header logos at top of page."""
+    return y0 < LOGO_Y_THRESHOLD
+
+
+# ─────────────────────────────────────────
+# STEP 1 — Scan page structure
+# ─────────────────────────────────────────
+
+def scan_page_structure(pdf_path):
+    doc = fitz.open(pdf_path)
+    page_structure = {}
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        blocks = page.get_text("dict")["blocks"]
+        markers = []
+
+        for block in blocks:
+            if block["type"] != 0:
+                continue
+            for line in block["lines"]:
+                for span in line["spans"]:
+                    text = span["text"].strip()
+                    y_pos = span["bbox"][1]
+
+                    # Format 1 — "Question No. 1"
+                    if re.match(r'^Question No\.?\s*\d+', text, re.IGNORECASE):
+                        q_num = re.search(r'\d+', text)
+                        if q_num:
+                            markers.append({
+                                "type": "question_start",
+                                "question_number": int(q_num.group()),
+                                "y": round(y_pos, 2)
+                            })
+
+                    # Format 2 — "2." (number dot alone)
+                    elif re.match(r'^\d+\.$', text):
+                        q_num = int(re.search(r'\d+', text).group())
+                        if 1 <= q_num <= 180:
+                            markers.append({
+                                "type": "question_start",
+                                "question_number": q_num,
+                                "y": round(y_pos, 2)
+                            })
+
+                    # Options start — "(1)"
+                    elif re.match(r'^\(1\)', text):
+                        markers.append({
+                            "type": "options_start",
+                            "y": round(y_pos, 2)
+                        })
+
+                    # Solution marker
+                    elif re.match(r'^Sol\.', text):
+                        markers.append({
+                            "type": "solution_start",
+                            "y": round(y_pos, 2)
+                        })
+
+        page_structure[page_num + 1] = sorted(markers, key=lambda x: x["y"])
+
+    doc.close()
+    return page_structure
+
+
+# ─────────────────────────────────────────
+# STEP 2 — Extract and map images
+# ─────────────────────────────────────────
+
+def extract_and_map_images(pdf_path, page_structure):
+    doc = fitz.open(pdf_path)
+    mapped_images = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        page_key = page_num + 1
+        markers = page_structure.get(page_key, [])
+
+        image_list = page.get_images(full=True)
+
+        for img_index, img in enumerate(image_list):
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            image_bytes = base_image["image"]
+            width = base_image["width"]
+            height = base_image["height"]
+
+            # Filter by size first
+            if is_watermark(width, height):
+                print(f"  Page {page_key} — skipping background ({width}x{height})")
+                continue
+            if is_too_small(width, height):
+                continue
+
+            # Get image position
+            img_rects = page.get_image_rects(xref)
+            if not img_rects:
+                continue
+
+            rect = img_rects[0]
+            image_y = rect.y0
+
+            # Filter logo at top of page
+            if is_logo(image_y):
+                print(f"  Page {page_key} — skipping logo at y0={round(image_y,2)}")
+                continue
+
+            # Find which question and zone
+            last_question = None
+            last_zone = "question"
+
+            for marker in markers:
+                if marker["y"] > image_y:
+                    break
+                if marker["type"] == "question_start":
+                    last_question = marker["question_number"]
+                    last_zone = "question"
+                elif marker["type"] == "options_start":
+                    last_zone = "option"
+                elif marker["type"] == "solution_start":
+                    last_zone = "solution"
+
+            if not last_question:
+                markers_below = [m for m in markers
+                                if m["type"] == "question_start"
+                                and m["y"] > image_y]
+                if markers_below:
+                    last_question = markers_below[0]["question_number"]
+                    last_zone = "question"
+                else:
+                    print(f"  Page {page_key} | img{img_index} | no question found — skipping")
+                    continue
+
+            filename = f"p{page_key}_q{last_question}_{last_zone}_{img_index}.png"
+
+            mapped_images.append({
+                "page": page_key,
+                "question_number": last_question,
+                "zone": last_zone,
+                "width": width,
+                "height": height,
+                "image_bytes": image_bytes,
+                "filename": filename,
+                "position": {
+                    "x0": round(rect.x0, 2),
+                    "y0": round(image_y, 2),
+                    "x1": round(rect.x1, 2),
+                    "y1": round(rect.y1, 2)
+                }
+            })
+
+            print(f"  Page {page_key} | Q{last_question} | zone={last_zone} | {width}x{height} | {filename}")
+
+    doc.close()
+    return mapped_images
+
+
+# ─────────────────────────────────────────
+# STEP 3 — Upload to GCS
+# ─────────────────────────────────────────
+
+def upload_to_gcs(image_bytes, filename, paper_id):
+    storage_client = storage.Client(project=PROJECT)
+    bucket = storage_client.bucket(DIAGRAMS_BUCKET)
+    blob_path = f"{paper_id}/{filename}"
+    blob = bucket.blob(blob_path)
+    blob.upload_from_string(image_bytes, content_type="image/png")
+    return f"gs://{DIAGRAMS_BUCKET}/{blob_path}"
+
+
+# ─────────────────────────────────────────
+# STEP 4 — Update BigQuery
+# ─────────────────────────────────────────
+
+def update_bigquery(question_number, zone, gcs_url):
+    bq_client = bigquery.Client(project=PROJECT)
+
+    column_map = {
+        "question": "question_diagram_url",
+        "solution": "solution_diagram_url",
+        "option":   "option_1_diagram_url"
+    }
+
+    column = column_map.get(zone, "question_diagram_url")
+
+    query = f"""
+    UPDATE `{PROJECT}.question_bank.dim_questions`
+    SET {column} = '{gcs_url}'
+    WHERE paper_id = '{PAPER_ID}'
+    AND question_number = {question_number}
+    """
+
+    bq_client.query(query).result()
+    print(f"  Updated Q{question_number} {column} in BigQuery")
+
+
+# ─────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────
+
+print("=" * 55)
+print("DIAGRAM EXTRACTION AND MAPPING — NEET 2016")
+print("=" * 55)
+
+# Step 1 — scan page structure
+print("\nStep 1 — Scanning page structure...")
+page_structure = scan_page_structure(PDF_FILE)
+
+pages_with_markers = {p: m for p, m in page_structure.items() if m}
+print(f"Pages with markers: {sorted(pages_with_markers.keys())}")
+
+for page, markers in sorted(pages_with_markers.items()):
+    q_markers = [m for m in markers if m["type"] == "question_start"]
+    print(f"  Page {page}: {len(q_markers)} questions, {len(markers)} total markers")
+
+# Step 2 — extract and map images
+print("\nStep 2 — Extracting and mapping images...")
+mapped_images = extract_and_map_images(PDF_FILE, page_structure)
+print(f"\nTotal mapped images: {len(mapped_images)}")
+
+# Step 3 — save locally to verify
+print("\nStep 3 — Saving locally to verify...")
+os.makedirs("mapped_images", exist_ok=True)
+for img in mapped_images:
+    filepath = os.path.join("mapped_images", img["filename"])
+    with open(filepath, "wb") as f:
+        f.write(img["image_bytes"])
+print(f"Saved {len(mapped_images)} images to mapped_images/")
+
+# Step 4 — print summary
+print("\nMapped images summary:")
+for img in mapped_images:
+    print(f"  Q{img['question_number']} | zone={img['zone']} | {img['width']}x{img['height']} | {img['filename']}")
+
+# Step 5 — confirm before uploading
+print(f"\nReady to upload {len(mapped_images)} images to GCS and update BigQuery.")
+print("Do you want to proceed? (yes/no)")
+confirm = input().strip().lower()
+
+if confirm in ["yes", "y"]:
+    print("\nStep 5 — Uploading to GCS and updating BigQuery...")
+    success = 0
+    failed = 0
+
+    for img in mapped_images:
+        try:
+            gcs_url = upload_to_gcs(img["image_bytes"], img["filename"], PAPER_ID)
+            print(f"  Uploaded: {gcs_url}")
+            update_bigquery(img["question_number"], img["zone"], gcs_url)
+            success += 1
+        except Exception as e:
+            print(f"  Error for {img['filename']}: {e}")
+            failed += 1
+
+    print(f"\nDone.")
+    print(f"Successfully uploaded: {success}")
+    print(f"Failed: {failed}")
+else:
+    print("Skipped upload. Check mapped_images/ folder to verify.")

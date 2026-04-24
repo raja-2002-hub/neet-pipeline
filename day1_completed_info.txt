@@ -1,0 +1,18 @@
+GCP Project ID: project-3639c8e1-b432-4a18-99f
+Region: us-central1
+Service Account: pipeline-sa@project-3639c8e1-b432-4a18-99f.iam.gserviceaccount.com
+
+Buckets:
+- project-3639c8e1-b432-4a18-99f-input-papers
+- project-3639c8e1-b432-4a18-99f-raw-json
+- project-3639c8e1-b432-4a18-99f-diagrams
+- project-3639c8e1-b432-4a18-99f-failed
+- project-3639c8e1-b432-4a18-99f-staging
+
+BigQuery:
+- Dataset: question_bank
+- Tables: raw_questions, dim_questions, dim_papers
+
+Start every Cloud Shell session with:
+export PROJECT=$(gcloud config get-value project)
+export REGION="us-central1"

@@ -1,0 +1,10 @@
+functions-framework==3.*
+google-cloud-storage
+google-cloud-bigquery
+google-genai
+PyMuPDF
+Pillow
+numpy
+rdkit
+pillow
+python-docx
