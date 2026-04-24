@@ -1,0 +1,85 @@
+name: NEET Pipeline CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  dbt-test:
+    name: dbt Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install dbt-bigquery
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/1021864423715/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: neet-pipeline-sa@project-3639c8e1-b432-4a18-99f.iam.gserviceaccount.com
+      - name: Configure dbt
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml << 'EOF'
+          neet_dbt:
+            target: ci
+            outputs:
+              ci:
+                type: bigquery
+                method: oauth
+                project: project-3639c8e1-b432-4a18-99f
+                dataset: question_bank
+                threads: 4
+                timeout_seconds: 300
+                location: US
+          EOF
+      - name: dbt run
+        working-directory: neet-pipeline/neet_dbt
+        run: dbt run
+      - name: dbt test
+        working-directory: neet-pipeline/neet_dbt
+        run: dbt test
+
+  deploy-pipeline:
+    name: Deploy Pipeline
+    runs-on: ubuntu-latest
+    needs: dbt-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/1021864423715/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: neet-pipeline-sa@project-3639c8e1-b432-4a18-99f.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy Cloud Function
+        run: |
+          gcloud functions deploy neet-pdf-processor \
+            --gen2 --runtime python312 --region us-central1 \
+            --source neet-pipeline/cloud_function \
+            --entry-point process_pdf --memory 4Gi --timeout 3600s
+
+  deploy-dashboard:
+    name: Deploy Dashboard
+    runs-on: ubuntu-latest
+    needs: dbt-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/1021864423715/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: neet-pipeline-sa@project-3639c8e1-b432-4a18-99f.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy neet-review \
+            --source neet-review-app --region us-central1 \
+            --allow-unauthenticated
