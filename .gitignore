@@ -7,3 +7,5 @@ __pycache__/
 terraform/.terraform/ 
 node_modules/ 
 logs/ 
+.env 
+*.env 
