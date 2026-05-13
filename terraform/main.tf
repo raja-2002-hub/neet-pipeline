@@ -252,6 +252,44 @@ resource "google_bigquery_table" "formulas" {
 }
 
 
+# ── Quiz Violations (Proctoring) ──
+resource "google_bigquery_table" "quiz_violations" {
+  dataset_id          = google_bigquery_dataset.question_bank.dataset_id
+  table_id            = "quiz_violations"
+  project             = var.project_id
+  deletion_protection = true
+
+  description = "Anti-cheating proctoring events logged during NEET quizzes"
+
+  time_partitioning {
+    type  = "DAY"
+    field = "event_timestamp"
+  }
+
+  clustering = ["student_id", "quiz_session_id"]
+
+  labels = {
+    app = "neet-student"
+  }
+
+  schema = jsonencode([
+    { name = "violation_id",     type = "STRING",    mode = "REQUIRED", description = "UUID for this event" },
+    { name = "quiz_session_id",  type = "STRING",    mode = "REQUIRED", description = "Quiz session this violation belongs to" },
+    { name = "student_id",       type = "STRING",    mode = "REQUIRED", description = "Firebase UID" },
+    { name = "student_email",    type = "STRING",    mode = "NULLABLE", description = "Firebase email" },
+    { name = "violation_type",   type = "STRING",    mode = "REQUIRED", description = "tab_switch | window_blur | copy | paste | right_click | print_screen" },
+    { name = "violation_source", type = "STRING",    mode = "REQUIRED", description = "browser" },
+    { name = "question_index",   type = "INT64",     mode = "NULLABLE", description = "Which question (0-based) the student was on" },
+    { name = "question_id",      type = "STRING",    mode = "NULLABLE", description = "Question ID at time of violation" },
+    { name = "strike_number",    type = "INT64",     mode = "REQUIRED", description = "Cumulative strike count when this fired" },
+    { name = "auto_submitted",   type = "BOOL",      mode = "REQUIRED", description = "True if this violation triggered an auto-submit" },
+    { name = "details_json",     type = "STRING",    mode = "NULLABLE", description = "Optional extra context (away duration, face count, etc.)" },
+    { name = "user_agent",       type = "STRING",    mode = "NULLABLE", description = "Browser user-agent string" },
+    { name = "event_timestamp",  type = "TIMESTAMP", mode = "REQUIRED", description = "When the violation fired (client clock)" }
+  ])
+}
+
+
 # ──────────────────────────────────────────────────────────
 # CLOUD FUNCTION — Pipeline processor (gen2)
 # ──────────────────────────────────────────────────────────
